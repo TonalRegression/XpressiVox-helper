@@ -12,3 +12,6 @@ The build recipe in `.github/workflows/build.yml` packs it into one program per 
 Test: `node test-helper.mjs`.
 
 Licence: MIT.
+
+## Secure (https) mode
+If `cert.pem` and `key.pem` are in the `helper` folder next to the program, it serves https instead of http. The XpressiVox installer makes a certificate that vouches only for `127.0.0.1` and `localhost` (it is not a certificate authority) and asks macOS to trust that one certificate. This is what lets Safari reach the helper from https://xpressivox.com.

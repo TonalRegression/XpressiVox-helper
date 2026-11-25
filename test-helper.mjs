@@ -34,4 +34,18 @@ const hostRes = await new Promise((res) => { const q = http.request({ host: '127
 const page = await (await fetch(base + '/')).text(); check(page.includes(token), 'pairing page shows the code to a direct visit');
 const pageX = await fetch(base + '/', { headers: { Origin: 'https://xpressivox.com' } }); check(!(await pageX.text()).includes(token), 'pairing page not served to a web page');
 const big = await new Promise((res) => { const q = http.request({ host: '127.0.0.1', port: PORT, path: '/preview', method: 'POST', headers: H() }, (m) => res(m.statusCode)); q.on('error', () => res('closed')); q.write(Buffer.alloc(31 * 1024 * 1024, 32)); q.end(); }); check(big === 413 || big === 'closed', 'over 30 MB refused');
+
+// https: with cert.pem and key.pem in <root>/helper the helper serves https; without them it serves http
+import https from 'node:https'; import { execFileSync } from 'node:child_process';
+{
+  const root2 = fs.mkdtempSync(path.join(os.tmpdir(), 'xvs-')); fs.mkdirSync(path.join(root2, 'helper'));
+  fs.writeFileSync(path.join(root2, 'c.cnf'), '[req]\ndistinguished_name=dn\nx509_extensions=ext\nprompt=no\n[dn]\nCN=test\n[ext]\nsubjectAltName=IP:127.0.0.1,DNS:localhost\nbasicConstraints=critical,CA:FALSE\n');
+  execFileSync('openssl', ['req', '-x509', '-newkey', 'rsa:2048', '-nodes', '-keyout', path.join(root2, 'helper', 'key.pem'), '-out', path.join(root2, 'helper', 'cert.pem'), '-days', '2', '-config', path.join(root2, 'c.cnf')], { stdio: 'ignore' });
+  const P2 = PORT + 1000; const h2 = makeServer({ root: root2, port: P2 }); check(h2.secure === true, 'cert.pem and key.pem present -> https');
+  await new Promise((r) => h2.server.listen(P2, '127.0.0.1', r));
+  const got = await new Promise((res) => https.get({ host: '127.0.0.1', port: P2, path: '/status', ca: fs.readFileSync(path.join(root2, 'helper', 'cert.pem')), headers: { 'x-xpressivox-token': h2.token, Origin: 'https://xpressivox.com' } }, (m) => { let b = ''; m.on('data', (c) => b += c); m.on('end', () => res({ s: m.statusCode, b: JSON.parse(b), h: m.headers })); }).on('error', (e) => res({ s: String(e) })));
+  check(got.s === 200 && got.b.secure === true && got.h['access-control-allow-origin'] === 'https://xpressivox.com', 'https answers /status with the right code, says secure, allows xpressivox.com');
+  h2.server.close();
+  check(makeServer({ root: fs.mkdtempSync(path.join(os.tmpdir(), 'xvn-')), port: P2 }).secure === false, 'no certificate -> plain http');
+}
 server.close(); console.log(bad ? bad + ' FAILED' : 'all passed'); process.exit(bad ? 1 : 0);

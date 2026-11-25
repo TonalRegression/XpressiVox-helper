@@ -1,4 +1,4 @@
-// xpressivox-helper.mjs  --  XpressiVox's own small local helper (version 1). Written fresh; no code from SV-MCP.
+// xpressivox-helper.mjs  --  XpressiVox's own small local helper (version 2). Written fresh; no code from SV-MCP.
 // No installs needed beyond Node itself: it uses only what Node already includes.
 //
 // WHAT IT DOES, in plain words
@@ -14,8 +14,9 @@ const fs = require('node:fs');
 const path = require('node:path');
 const os = require('node:os');
 const crypto = require('node:crypto');
+const https = require('node:https');
 
-const HELPER_VERSION = 1;
+const HELPER_VERSION = 2;
 const PORT = Number(process.env.XV_PORT || 47321);
 const MAX_BYTES = 30 * 1024 * 1024;
 
@@ -38,7 +39,7 @@ function writeAtomic(file, data) {
 }
 function readJson(file) { try { return JSON.parse(fs.readFileSync(file, 'utf8')); } catch { return null; } }
 
-function makeServer({ root, port = PORT, now = () => Date.now() }) {
+function makeServer({ root, port = PORT, now = () => Date.now(), tls }) {
   const bridge = path.join(root, 'bridge');
   fs.mkdirSync(bridge, { recursive: true });
   const tokenFile = path.join(root, 'helper-code.txt');
@@ -53,7 +54,12 @@ function makeServer({ root, port = PORT, now = () => Date.now() }) {
     res.writeHead(code, { 'Content-Type': typeof body === 'string' ? 'text/html; charset=utf-8' : 'application/json', 'Cache-Control': 'no-store', ...headers });
     res.end(text);
   };
-  const server = http.createServer((req, res) => {
+  // v2: if cert.pem and key.pem are in the helper folder, serve https (the installer makes a certificate that vouches only for 127.0.0.1 and localhost)
+  let secure = false, tlsOpts = null;
+  if (tls !== false) {
+    try { tlsOpts = tls || { key: fs.readFileSync(path.join(root, 'helper', 'key.pem')), cert: fs.readFileSync(path.join(root, 'helper', 'cert.pem')) }; secure = true; } catch { tlsOpts = null; }
+  }
+  const handler = (req, res) => {
     const origin = req.headers.origin;
     const cors = {};
     if (originOk(origin)) {
@@ -77,7 +83,7 @@ function makeServer({ root, port = PORT, now = () => Date.now() }) {
       const hb = readJson(path.join(bridge, 'heartbeat.json'));
       const st = readJson(path.join(bridge, 'status.json'));
       const age = hb && typeof hb.lastBeatEpochMs === 'number' ? now() - hb.lastBeatEpochMs : null;
-      return send(res, 200, { ok: true, helperVersion: HELPER_VERSION, bridge, scriptRunning: age !== null && age < 4000, heartbeatAgeMs: age, scriptVersion: hb && hb.scriptVersion || null, heartbeat: hb, status: st }, cors);
+      return send(res, 200, { ok: true, helperVersion: HELPER_VERSION, secure, bridge, scriptRunning: age !== null && age < 4000, heartbeatAgeMs: age, scriptVersion: hb && hb.scriptVersion || null, heartbeat: hb, status: st }, cors);
     }
     if (req.method === 'POST' && (url.pathname === '/preview' || url.pathname === '/command')) {
       const chunks = []; let size = 0, dead = false;
@@ -103,8 +109,9 @@ function makeServer({ root, port = PORT, now = () => Date.now() }) {
       return;
     }
     send(res, 404, { ok: false, error: 'not-found' }, cors);
-  });
-  return { server, token, bridge, tokenFile };
+  };
+  const server = secure ? https.createServer(tlsOpts, handler) : http.createServer(handler);
+  return { server, token, bridge, tokenFile, secure };
 }
 
 module.exports = { HELPER_VERSION, rootFolder, makeServer };
@@ -113,8 +120,8 @@ module.exports = { HELPER_VERSION, rootFolder, makeServer };
 if (process.env.XV_AS_LIBRARY !== '1') {
   const arg = process.argv.find((a) => a === '--version' || a === '--code');
   if (arg === '--version') { console.log('XpressiVox helper version ' + HELPER_VERSION); process.exit(0); }
-  const { server, token } = makeServer({ root: rootFolder() });
+  const { server, token, secure } = makeServer({ root: rootFolder() });
   if (arg === '--code') { console.log(token); process.exit(0); }
   server.on('error', (e) => { console.error(e.code === 'EADDRINUSE' ? `Port ${PORT} is already in use. The helper may already be running.` : String(e)); process.exit(1); });
-  server.listen(PORT, '127.0.0.1', () => console.log(`XpressiVox helper ${HELPER_VERSION} listening on 127.0.0.1:${PORT}. Open http://127.0.0.1:${PORT}/ in a browser tab to see your pairing code.`));
+  server.listen(PORT, '127.0.0.1', () => console.log(`XpressiVox helper ${HELPER_VERSION} listening on 127.0.0.1:${PORT} (${secure ? 'https' : 'http'}). Open ${secure ? 'https' : 'http'}://127.0.0.1:${PORT}/ in a browser tab to see your pairing code.`));
 }
