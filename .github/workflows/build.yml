@@ -1,0 +1,45 @@
+name: Build helper programs
+on:
+  push:
+    branches: [main]
+    tags: ['v*']
+  workflow_dispatch:
+jobs:
+  build:
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - { os: macos-15,       name: xpressivox-helper-macos-arm64 }
+          - { os: macos-15-intel, name: xpressivox-helper-macos-x64 }
+          - { os: windows-latest, name: xpressivox-helper-windows-x64.exe }
+    runs-on: ${{ matrix.os }}
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with: { node-version: '22' }
+      - name: Tests
+        run: node test-helper.mjs
+      - name: Make the single program (Node single-executable application)
+        shell: bash
+        run: |
+          mkdir -p dist
+          node --experimental-sea-config sea-config.json
+          node -e "require('fs').copyFileSync(process.execPath, 'dist/${{ matrix.name }}')"
+          if [ "$RUNNER_OS" = "macOS" ]; then codesign --remove-signature "dist/${{ matrix.name }}"; fi
+          if [ "$RUNNER_OS" = "macOS" ]; then SEG="--macho-segment-name NODE_SEA"; else SEG=""; fi
+          npx --yes postject "dist/${{ matrix.name }}" NODE_SEA_BLOB sea-prep.blob --sentinel-fuse NODE_SEA_FUSE_fce680ab2cc467b6e072b8b5df1996b2 $SEG
+          if [ "$RUNNER_OS" = "macOS" ]; then codesign --sign - "dist/${{ matrix.name }}"; chmod +x "dist/${{ matrix.name }}"; fi
+      - name: Smoke test (the program runs on its own)
+        shell: bash
+        run: |
+          "dist/${{ matrix.name }}" --version
+          XV_ROOT="$RUNNER_TEMP/xv" "dist/${{ matrix.name }}" --code
+      - name: Checksum
+        shell: bash
+        run: |
+          cd dist
+          if command -v shasum >/dev/null; then shasum -a 256 "${{ matrix.name }}" > "${{ matrix.name }}.sha256"; else sha256sum "${{ matrix.name }}" > "${{ matrix.name }}.sha256"; fi
+          cat "${{ matrix.name }}.sha256"
+      - uses: actions/upload-artifact@v4
+        with: { name: '${{ matrix.name }}', path: 'dist/*' }

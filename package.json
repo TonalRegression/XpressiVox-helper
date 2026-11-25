@@ -1,0 +1,1 @@
+{ "name": "xpressivox-helper", "version": "1.0.0", "private": true, "description": "Small local helper that passes XpressiVox previews to Synthesizer V.", "license": "MIT", "scripts": { "test": "node test-helper.mjs", "start": "node xpressivox-helper.cjs" } }
